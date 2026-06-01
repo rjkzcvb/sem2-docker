@@ -46,54 +46,41 @@ jobs:
           compose-file: "./docker-compose.yml"
           up-flags: "--build -d"
       
-      # ===== ДОБАВЛЕННЫЕ ШАГИ (НЕ МЕНЯЮТ СУЩЕСТВУЮЩИЕ) =====
-      - name: Wait for backend
+      - name: Wait for backend to be healthy
         run: |
-          echo "Waiting for backend to be ready..."
-          for i in {1..20}; do
-            if curl -s -f http://localhost:8081/health > /dev/null 2>&1; then
-              echo "✓ Backend is ready!"
+          echo "Waiting for backend to be healthy..."
+          for i in {1..30}; do
+            STATUS=$(docker inspect backend-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "not found")
+            echo "Attempt $i/30: Health status = $STATUS"
+            
+            if [ "$STATUS" = "healthy" ]; then
+              echo "✓ Backend is healthy!"
               exit 0
             fi
-            echo "Attempt $i/20: Backend not ready yet..."
-            sleep 3
+            
+            # Показываем логи для диагностики
+            if [ $((i % 5)) -eq 0 ]; then
+              echo "--- Backend logs (last 5 lines) ---"
+              docker logs backend-app --tail=5 2>/dev/null || true
+            fi
+            
+            sleep 5
           done
-          echo "Backend did not become ready in time"
+          
+          echo "❌ Backend did not become healthy in time"
+          echo "Final health status: $(docker inspect backend-app --format='{{.State.Health.Status}}' 2>/dev/null)"
+          echo "--- Full backend logs ---"
+          docker logs backend-app 2>/dev/null || true
           exit 1
       
-      - name: Check containers
+      - name: Test backend endpoint
         run: |
-          echo "Container status:"
-          docker ps -a
-          echo "✓ Containers are running"
+          echo "Testing backend endpoint..."
+          curl -f http://localhost:8081/health || exit 1
+          echo "✓ Backend endpoint works!"
       
-      - name: Verify backend health
-        run: |
-          HEALTH_STATUS=$(docker inspect backend-app --format='{{.State.Health.Status}}')
-          echo "Backend health status: $HEALTH_STATUS"
-          if [ "$HEALTH_STATUS" = "healthy" ]; then
-            echo "✓ Backend is healthy!"
-          else
-            echo "Backend is not healthy"
-            exit 1
-          fi
-      
-      - name: Frontend check (non-fatal)
-        run: |
-          echo "Checking frontend container..."
-          if docker ps | grep -q frontend-app; then
-            echo "✓ Frontend container is running"
-            # Пытаемся получить страницу, но не падаем
-            curl -s http://localhost/ > /dev/null && echo "✓ Frontend responds" || echo "⚠ Frontend not responding yet"
-          else
-            echo "⚠ Frontend container is not running"
-          fi
-      
-      - name: Docker compose logs (for debugging)
-        if: always()
-        run: |
-          echo "=== Docker Compose Logs ==="
-          docker compose logs --tail=30
+      - name: Check all containers
+        run: docker ps -a
       
       - name: Cleanup
         if: always()
