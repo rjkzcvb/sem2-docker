@@ -1,0 +1,79 @@
+version: '3.8'
+
+# Сети для изоляции
+networks:
+  backend-net:
+    driver: bridge
+    internal: false  
+  frontend-net:
+    driver: bridge
+
+# Тома для данных (если понадобятся)
+volumes:
+  backend-data:
+  frontend-data:
+
+services:
+  # ---------- БЭКЕНД ----------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: myapp-backend:latest
+    container_name: backend-app
+    restart: unless-stopped   # политика перезапуска
+    ports:
+      - "8081:8081"           # хост:контейнер
+    environment:
+      - GIN_MODE=release
+      - DB_HOST=postgres      # пример, если будет БД
+      # другие переменные окружения
+    volumes:
+      - backend-data:/app/data   # монтируем том для данных (если бэкенд пишет файлы)
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ---------- ФРОНТЕНД ----------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: myapp-frontend:latest
+    container_name: frontend-app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - frontend-net
+      - backend-net   # чтобы фронт мог обращаться к бэку (если через API)
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
