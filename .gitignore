@@ -17,3 +17,10 @@ vendor/
 .vscode/
 .DS_Store
 *.tgz
+# .gitignore
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
