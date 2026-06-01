@@ -14,7 +14,7 @@ jobs:
           uses: actions/checkout@v3
         - name: Set up Docker Buildx
           uses: docker/setup-buildx-action@v2
-        - name: Login to Docker 
+        - name: Login to Docker
           uses: docker/login-action@v2
           with:
             username: ${{ secrets.DOCKER_USER }}
@@ -25,15 +25,21 @@ jobs:
             context: ./backend/
             push: true
             tags: ${{ secrets.DOCKER_USER }}/docker-project-backend:latest
+            # Добавляем кэширование для ускорения сборки
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
         - name: Push Frontend to DockerHub
           uses: docker/build-push-action@v4
           with:
             context: ./frontend/
             push: true
             tags: ${{ secrets.DOCKER_USER }}/docker-project-frontend:latest
+            # Добавляем кэширование для ускорения сборки
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
 
   run-with-docker-compose:
-    name: Push Docker image to DockerHub
+    name: Push Docker image to DockerHub  # Оставляем как в оригинале
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
@@ -42,3 +48,56 @@ jobs:
         uses: docker/setup-buildx-action@v2
       - name: Build via Docker Compose
         uses: hoverkraft-tech/compose-action@v2.2.0
+        with:
+          # Основные параметры для работы
+          compose-file: "./docker-compose.yml"
+          down-flags: "--volumes"  # Очищаем перед сборкой
+          up-flags: "--build -d"   # Собираем и запускаем в фоне
+      
+      # Дополнительный шаг: проверяем, что контейнеры запустились
+      - name: Check containers status
+        run: |
+          echo "=== Контейнеры после запуска ==="
+          docker ps -a
+          echo "=== Логи бэкенда ==="
+          docker-compose logs backend --tail=20 || true
+          echo "=== Логи фронтенда ==="
+          docker-compose logs frontend --tail=20 || true
+          echo "=== Проверка healthcheck ==="
+          sleep 5
+          docker inspect --format='{{.Name}} - Health: {{.State.Health.Status}}' $(docker ps -q) 2>/dev/null || echo "Healthcheck не настроен или контейнеры не запущены"
+      
+      # Проверяем, что приложение отвечает
+      - name: Test application endpoints
+        run: |
+          echo "=== Тестируем бэкенд ==="
+          curl -f http://localhost:8081/health || exit 1
+          echo "✅ Бэкенд отвечает"
+          
+          echo "=== Тестируем фронтенд ==="
+          curl -f http://localhost/ || exit 1
+          echo "✅ Фронтенд отвечает"
+
+
+  # Безопасность
+  security-scan:
+    name: Security scan images
+    runs-on: ubuntu-latest
+    needs: build_and_push_to_docker_hub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Scan Backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USER }}/docker-project-backend:latest
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+      - name: Scan Frontend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USER }}/docker-project-frontend:latest
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
